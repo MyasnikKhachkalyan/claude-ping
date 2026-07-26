@@ -1,0 +1,24 @@
+{
+  "name": "claude-ping",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram notifications and remote control for Claude Code: get pinged when Claude waits for you, and reply from your phone.",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "setup": "node dist/src/setup.js status",
+    "chatid": "node dist/src/setup.js detect",
+    "test": "tsc && node --test dist/test/*.test.js",
+    "prepare": "tsc"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}

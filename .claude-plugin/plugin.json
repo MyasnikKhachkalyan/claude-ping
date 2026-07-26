@@ -1,0 +1,12 @@
+{
+  "name": "claude-ping",
+  "version": "0.1.0",
+  "description": "Telegram tells you when Claude Code is waiting on you or needs approval — and optionally lets you answer the permission prompt from your phone",
+  "author": {
+    "name": "Myasnik Khachkalyan",
+    "url": "https://github.com/MyasnikKhachkalyan"
+  },
+  "license": "MIT",
+  "keywords": ["notifications", "telegram", "push", "hooks", "remote", "mobile"],
+  "category": "productivity"
+}

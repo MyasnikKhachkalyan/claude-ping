@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-ping",
+  "description": "Telegram push notifications and remote control for Claude Code",
+  "owner": {
+    "name": "Myasnik Khachkalyan",
+    "url": "https://github.com/MyasnikKhachkalyan"
+  },
+  "plugins": [
+    {
+      "name": "claude-ping",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "Telegram tells you when Claude Code is waiting on you or needs approval, and lets you answer from your phone",
+      "author": {
+        "name": "Myasnik Khachkalyan",
+        "url": "https://github.com/MyasnikKhachkalyan"
+      },
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["notifications", "telegram", "push", "hooks", "remote", "mobile"]
+    }
+  ]
+}

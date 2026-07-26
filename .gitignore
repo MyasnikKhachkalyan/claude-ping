@@ -1,0 +1,11 @@
+node_modules/
+.env
+.DS_Store
+*.log
+
+# dist/src is deliberately committed: `/plugin install` copies the repo as-is and never runs a
+# build, so the hooks must ship as compiled JS. Compiled tests are not part of the plugin.
+dist/test/
+
+# Per-machine permission grants, not project config.
+.claude/settings.local.json
