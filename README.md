@@ -3,8 +3,8 @@
 Telegram tells you when Claude Code needs you — and, if you want, lets you answer the permission
 prompt from your phone instead of walking back to the keyboard.
 
-No separate Claude session, no remote control. It attaches to the session you're already working
-in. Telegram is answer-only: it relays questions and takes decisions, and that's all it does.
+It attaches to the session you're already working in. No separate Claude session, no remote
+control: Telegram relays questions and takes decisions, and that's all it does.
 
 ```
 your Claude Code session ──▶ hooks ──▶ Telegram ──▶ your phone
@@ -12,32 +12,37 @@ your Claude Code session ──▶ hooks ──▶ Telegram ──▶ your phone
                                └──── your decision ◀────┘
 ```
 
-## Three features, three toggles
+## Features
 
-| Feature | Default | What it does |
-|---|---|---|
-| **Waiting pings** | on | Push when Claude has been waiting on you for `waitSeconds` |
-| **Permission pings** | on | Push when Claude needs approval |
-| **Answer from phone** | **off** | Buttons that decide the prompt, not just report it |
+| Feature | Key | Default | What it does |
+|---|---|---|---|
+| Waiting pings | `notifyOnStop` | on | Pings you when Claude has been waiting on you for `waitSeconds` |
+| Permission pings | `notifyOnPermission` | on | Pings you when Claude needs approval |
+| Answer from phone | `answerFromPhone` | **off** | Buttons that decide the prompt, not just report it |
 
-The first two need nothing running. The third needs the relay — a background process bound to one
-session. It never starts on its own.
+Each is an independent toggle. The first two need nothing running. The third needs the **relay** —
+a background process bound to one Claude Code window, which never starts on its own.
+
+Requires Node ≥ 20.12. No runtime dependencies.
 
 ## Install
 
 ```
 /plugin marketplace add MyasnikKhachkalyan/claude-ping
-/plugin install claude-ping
+/plugin install claude-ping@claude-ping
 ```
 
-**Restart Claude Code.** Hooks are registered at startup, so a freshly installed plugin does
+**Then restart Claude Code.** Hooks are registered at startup, so a freshly installed plugin does
 nothing until you do.
 
-Then `/claude-ping`. It walks you through BotFather, saves the token, binds your chat, and asks
-which of the three features to turn on.
+## Setup
 
-Credentials go to `~/.claude-ping/config.json` (mode 600) — not the plugin directory, which is
-replaced on update. The bound chat id is also the access control: any other chat is ignored.
+Run `/claude-ping`. It walks you through @BotFather, saves the token, binds your chat, and asks
+which features to turn on.
+
+Credentials are written to `~/.claude-ping/config.json` (mode 600) — not the plugin directory,
+which is replaced on update. **The bound chat id is the access control**: messages from any other
+chat are ignored.
 
 ## Waiting pings
 
@@ -47,17 +52,15 @@ replaced on update. The bound chat id is also the access control: any other chat
 Which database should we use — Postgres or SQLite?
 ```
 
-The clock measures **your** idle time, not how long the turn took. Claude can churn for ten
-minutes; the countdown only starts when it stops and hands control back. Reply inside the window
-and nothing is ever sent, so a turn you sat and watched never buzzes you.
-
-Mechanically: `Stop` arms a detached timer and returns instantly; your next prompt disarms it.
+The clock measures *your* idle time, not how long the turn took. Claude can churn for ten minutes;
+the countdown starts only when it stops and hands control back. Reply before the window elapses
+and nothing is sent, so a turn you sat and watched never buzzes you.
 
 ## Answering from your phone
 
-Turn on `answerFromPhone` and start the relay (`/claude-ping` → "let me answer from my phone").
-When Claude needs approval **and** the turn has already been running for `waitSeconds` — so
-you'd plausibly walked off — the question goes to Telegram:
+Turn on `answerFromPhone` and start the relay — `/claude-ping` → "let me answer from my phone".
+When Claude needs approval *and* the turn has already run for `waitSeconds`, the question goes to
+Telegram:
 
 ```
 🔐 [website] Bash
@@ -69,61 +72,48 @@ npm run deploy
 [🖥 Answer at desktop]
 ```
 
-Messages are plain text — no `parse_mode`. Almost everything in them is untrusted (bash commands,
-file paths, repo names), and any markup mode turns a stray character in a command into a 400 that
-loses the whole question.
+Tap and Claude carries on. If the turn is younger than `waitSeconds` the desktop prompts
+immediately and your phone is never involved — you're clearly sitting there.
 
-Tap and Claude carries on. If the turn is younger than `waitSeconds`, the desktop prompts
-immediately with no phone involvement at all — you're clearly sitting there.
-
-**Nothing you type in Telegram ever reaches Claude.** Only a tap does, and only as one of those
-three verdicts on a question Claude already asked. There was once a "reject and tell Claude why"
-flow that passed your typed correction back as the denial message; it's gone. It made the chat an
-input channel into the session, so anyone holding that phone — or that chat — could put arbitrary
-instructions in front of Claude, which is a much bigger capability than declining a tool call.
-Free text sent to the bot gets a polite refusal and goes nowhere.
-
-For `AskUserQuestion`, Claude's own options are mirrored **verbatim** as buttons rather than
-reduced to yes/no. Multi-select and multi-question prompts fall back to the desktop, since one tap
-can't express those.
+For `AskUserQuestion`, Claude's own options are mirrored verbatim as buttons rather than reduced
+to yes/no. Multi-select and multi-question prompts fall back to the desktop, since one tap can't
+express those.
 
 **You are never stuck behind your phone.** Two ways back to the keyboard: the 🖥 button, and
 `answerWindowSeconds` (default 120), after which the prompt returns to the desktop by itself and
 the Telegram message marks itself expired.
 
-### One session owns Telegram
+### The relay
 
-Telegram serves `getUpdates` to a single consumer per bot token, so the first session to start a
-relay claims it. Other sessions prompt on the desktop as usual and `relay start` tells you which
-session holds it.
+One relay at a time, per bot token — Telegram serves `getUpdates` to a single consumer. The first
+window to start one claims it; every other window prompts on the desktop as usual.
 
-It shuts down two ways: `SessionEnd` when its session exits cleanly, and a liveness check on the
-Claude Code process itself for everything else — a crash, a closed terminal, `kill -9`. Without
-the second, an orphaned relay would hold the Telegram claim forever and lock out every other
-session. `setup.js relay stop` also works at any time.
+- It belongs to the **window**, not the conversation. `/clear` starts a new session but leaves the
+  relay running, and the new session inherits it.
+- It stops when that window exits, crashes, or is closed — and on `/stop` from Telegram or
+  `setup.js relay stop`.
+- Starting and stopping are both announced in the chat (🟢 / 🔴), so silence is never ambiguous.
+- **A relay going down turns `answerFromPhone` off**, globally and per repo. A config claiming
+  "answer from phone: on" with nothing polling Telegram would leave you waiting for a prompt that
+  cannot arrive. Turning it back on is deliberate, same as the first time.
 
-### The relay belongs to the window, not the conversation
+## Telegram commands
 
-`/clear` ends a session without ending the process hosting it: same window, same pid, new session
-id. The relay stays up across it, and the new session inherits it — nothing you would recognise as
-"your Claude" went away, so nothing should go quiet. Ownership is matched on the Claude Code
-process for exactly this reason; the session id is only a fallback for when the process tree can't
-be read. Close the window (or exit, log out, crash) and the relay goes down with it.
+| Command | |
+|---|---|
+| `/status` | Repos in play, each one's settings, and which holds the relay |
+| `/wait <seconds> [repo]` | Idle time before a question reaches your phone |
+| `/mute [repo]` | Stop waiting pings |
+| `/unmute [repo]` | Resume them |
+| `/stop` | Shut the relay down |
+| `/help` | The list |
 
-**A relay going down turns `answerFromPhone` off.** However it went — `/stop`, `relay stop`,
-`SessionEnd`, SIGTERM, the window closing — the setting goes false with it, in the global config
-and in every repo override. A config that still reads "answer from phone: on" with nothing polling
-Telegram is worse than one that reads off: you'd sit waiting for a prompt that cannot arrive. A
-relay killed outright can't run its own shutdown, so the next permission request notices the dead
-claim and clears both. Turning it back on is deliberate, same as the first time.
-
-**Both edges are announced in Telegram** — 🟢 with the repo and path when a relay starts, 🔴 with
-the reason when it stops. Without them "no messages" reads the same whether the relay is up and
-quiet or gone.
+Omit the repo and it applies everywhere; give a substring (`/wait 60 ping`) to target one. If the
+substring matches zero or several repos it refuses rather than guessing.
 
 ## Configuration
 
-`~/.claude-ping/config.json`, or the matching env var (env wins).
+`~/.claude-ping/config.json`, or the matching env var (env always wins).
 
 | Key | Env | Default | |
 |---|---|---|---|
@@ -135,48 +125,50 @@ quiet or gone.
 | `answerFromPhone` | `CLAUDE_PING_ANSWER_FROM_PHONE` | `false` | Answer prompts from Telegram |
 | `answerWindowSeconds` | `CLAUDE_PING_ANSWER_WINDOW` | `120` | Max time the phone holds a prompt |
 
-### Settings belong to a repo
-
-Every key above except the credentials is per repo, under `repos["/path/to/repo"]`. Resolution is
-**env var → this repo's override → global → default**, so a global still works as the value for
-projects that haven't said otherwise, and `CLAUDE_PING_*` still overrides everything as an escape
-hatch.
-
-Writes go to the current repo unless you pass `--global`. That default exists because only one
-window can hold the relay: setting `answerFromPhone` globally would have every project report a
-capability exactly one of them can use, which is a status display that lies.
-
-```bash
-node dist/src/setup.js status                        # this repo's effective settings
-node dist/src/setup.js wait 120                      # this repo
-node dist/src/setup.js wait 120 --global             # everywhere that hasn't overridden it
-node dist/src/setup.js on|off waiting|permission|answer [--global]
-node dist/src/setup.js relay start <session-id> | relay | relay stop
-```
-
-`botToken` and `chatId` are always global — one bot, one chat, whatever repo you're in.
+Everything except the credentials is **per repo**, stored under `repos["/path/to/repo"]`.
+Resolution is *env var → this repo → global → default*. Settings written from the CLI go to the
+current repo unless you pass `--global`; `botToken` and `chatId` are always global.
 
 Easiest via `/claude-ping` ("only ping me after two minutes", "stop telling me about finished
-turns"). From Telegram, `/wait`, `/mute` and `/unmute` take an optional repo substring and apply
-everywhere without one.
+turns"), or directly:
+
+```bash
+node dist/src/setup.js status                     # this repo's effective settings
+node dist/src/setup.js on|off waiting|permission|answer [--global]
+node dist/src/setup.js wait <seconds> [--global]
+node dist/src/setup.js relay start <session-id> | relay | relay stop
+node dist/src/setup.js token <bot-token> | detect | chat <chat-id>
+node dist/src/setup.js test                       # send a test message
+```
 
 Changes apply to the next turn — every hook run is a fresh process that re-reads the config, so
-nothing restarts. (Only the plugin's *hook registration* needs a Claude Code restart.)
+nothing restarts. Only the plugin's *hook registration* needs a Claude Code restart.
 
-## Notes
+## Security
 
-- Notification hooks always exit 0 and never block a session. A broken hook therefore looks
-  exactly like no notifications; `setup.js test` is how you tell the difference.
 - `answerFromPhone` means whoever holds that Telegram chat can approve tool calls on this machine.
-  It's off by default for that reason. What they cannot do is put words in Claude's context: the
-  chat carries verdicts, never text.
-- The relay never autostarts. Deliberately.
-- Requires Node ≥ 20.12. Tested on Node 22.
+  It is off by default for that reason.
+- **Nothing typed in Telegram ever reaches Claude.** A tap carries a verdict and nothing else; the
+  chat is not an input channel into your session. Free text sent to the bot is refused.
+- The bound chat id is enforced on every incoming message and button press.
+
+## Troubleshooting
+
+| Symptom | |
+|---|---|
+| Nothing arrives at all | `setup.js status` — configured? Then `setup.js test` for credentials |
+| Pings but no buttons | `answerFromPhone` off, or no relay running. `/status` shows both |
+| Buttons in another window but not this one | Another window owns the relay; `setup.js relay` names it |
+| Nothing changed after installing | Claude Code needs a restart to register hooks |
+
+Notification hooks always exit 0 and never block a session, so a broken hook looks exactly like no
+notifications — `setup.js test` is how you tell those apart. The relay logs to
+`~/.claude-ping/relay.log`.
 
 ## Development
 
-TypeScript, strict, compiled to `dist/`. **No runtime dependencies.** `dist/` is committed because
-`/plugin install` copies the repo as-is and never runs a build.
+TypeScript, strict. `dist/` is committed because `/plugin install` copies the repo as-is and never
+runs a build.
 
 ```bash
 npm run build       # tsc → dist/
@@ -187,14 +179,17 @@ npm test            # build, then node:test against dist/
 | Module | Role |
 |---|---|
 | `notify.ts` | `UserPromptSubmit` / `Notification` / `Stop` — the pings |
-| `permission.ts` | `PreToolUse` — decides whether to involve the phone, then waits |
-| `relay.ts` | Owns the single Telegram connection; turns questions into buttons |
+| `permission.ts` | `PermissionRequest` — decides whether to involve the phone, then waits |
+| `relay.ts` | Owns the Telegram connection; turns questions into buttons, taps into answers |
 | `protocol.ts` | The file protocol between hooks and the relay |
-| `turnstate.ts` | Per-session turn timing, shared by pings and the presence check |
-| `owner.ts` | Which session owns Telegram |
+| `owner.ts` | Which window owns Telegram |
+| `registry.ts` | Which sessions are in play, for `/status` |
+| `config.ts` | Settings, including the per-repo layering |
 
-## Roadmap
+Permission relaying hangs off `PermissionRequest` rather than `PreToolUse` on purpose: `PreToolUse`
+fires for every tool call, including ones an existing permission rule would have allowed silently,
+and its payload gives no way to tell those apart. With nothing enabled, the plugin is invisible.
 
-- Push via Claude's own mobile app instead of Telegram
-- A real "don't ask again" that writes a permission rule (`permissionDecision` is one-shot,
-  so the button was removed rather than shipped as a lie)
+## License
+
+MIT
