@@ -5,7 +5,7 @@
 // It exists because hooks cannot poll Telegram themselves: getUpdates admits one consumer per bot
 // token, and parallel tool calls mean several hooks can be waiting at once.
 import { basename } from 'node:path';
-import { configFor, isConfigured, saveTunable } from './config.js';
+import { MAX_PERMISSION_WAIT, WAIT_KEYS, configFor, isConfigured, saveTunable } from './config.js';
 import { listRepos } from './registry.js';
 import { repoKey, repoLabel } from './repo.js';
 import { readOwner } from './owner.js';
@@ -155,7 +155,7 @@ const HELP = [
     '🤖 claude-ping',
     '',
     '/status — repos in play and their settings',
-    '/wait <seconds> [repo] — idle time before a question reaches you',
+    '/wait [waiting|permission|answer] <seconds> [repo] — delay before a ping reaches you',
     '/mute [repo] — stop waiting pings',
     '/unmute [repo] — resume them',
     '/stop — shut the relay down (answering from here stops)',
@@ -228,8 +228,11 @@ export function formatStatus(repos, settingsFor, relay, now = Date.now()) {
         const mins = Math.round((now - r.lastSeen) / 60000);
         lines.push('');
         lines.push(`• ${r.repo}${mins > 0 ? `  (last seen ${mins}m ago)` : '  (active)'}${owns ? '  ← relay' : ''}`);
-        lines.push(`  waiting pings: ${onOff(s.notifyOnStop)}   permission pings: ${onOff(s.notifyOnPermission)}`);
-        lines.push(`  answer from phone: ${onOff(s.answerFromPhone)}   wait: ${s.waitSeconds}s`);
+        // Each toggle with its own delay beside it — they are separate settings, and pairing them is
+        // the only way to read "on, but not for another minute" as one fact.
+        lines.push(`  waiting pings: ${onOff(s.notifyOnStop)} after ${s.stopWaitSeconds}s`);
+        lines.push(`  permission pings: ${onOff(s.notifyOnPermission)} after ${s.permissionWaitSeconds}s`);
+        lines.push(`  answer from phone: ${onOff(s.answerFromPhone)} after ${s.answerWaitSeconds}s`);
         const caveat = phoneCaveat(s.answerFromPhone, owns, relay);
         if (caveat)
             lines.push(`  ↳ ${caveat}`);
@@ -265,16 +268,25 @@ async function onCommand(text) {
                 : null)));
         }
         case '/wait': {
-            const secs = Number(rest[0]);
+            // `/wait 60` still means what it always did — how long before my phone is involved — and
+            // sets both delays that answer that question. Naming one targets it alone.
+            const which = WAIT_KEYS[rest[0] ?? ''] ? rest[0] : undefined;
+            const rest2 = which ? rest.slice(1) : rest;
+            const secs = Number(rest2[0]);
             if (!Number.isFinite(secs) || secs < 0) {
-                return void (await tg.send('Usage: /wait <seconds> [repo]'));
+                return void (await tg.send('Usage: /wait [waiting|permission|answer] <seconds> [repo]'));
             }
-            const target = matchRepo(repos, rest[1]);
+            const target = matchRepo(repos, rest2[1]);
             if (target === 'ambiguous')
                 return void (await tg.send('No single repo matched that name.'));
             const repoPath = target === 'all' ? null : target.repoPath;
-            saveTunable(repoPath, { waitSeconds: secs });
-            return void (await tg.send(`⏱ Wait set to ${secs}s ${target === 'all' ? 'everywhere' : `for ${target.repo}`}.`));
+            const capped = which === 'permission' ? Math.min(secs, MAX_PERMISSION_WAIT) : secs;
+            saveTunable(repoPath, which
+                ? { [WAIT_KEYS[which]]: capped }
+                : { stopWaitSeconds: secs, answerWaitSeconds: secs });
+            const what = which ? `${which} wait` : 'Waiting and answer delays';
+            const note = capped !== secs ? ` (capped at ${MAX_PERMISSION_WAIT}s)` : '';
+            return void (await tg.send(`⏱ ${what} set to ${capped}s${note} ${target === 'all' ? 'everywhere' : `for ${target.repo}`}.`));
         }
         case '/mute':
         case '/unmute': {

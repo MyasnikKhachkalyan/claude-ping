@@ -14,14 +14,18 @@ your Claude Code session ──▶ hooks ──▶ Telegram ──▶ your phone
 
 ## Features
 
-| Feature | Key | Default | What it does |
-|---|---|---|---|
-| Waiting pings | `notifyOnStop` | on | Pings you when Claude has been waiting on you for `waitSeconds` |
-| Permission pings | `notifyOnPermission` | on | Pings you when Claude needs approval |
-| Answer from phone | `answerFromPhone` | **off** | Buttons that decide the prompt, not just report it |
+| Feature | Key | Default | Delay | What it does |
+|---|---|---|---|---|
+| Waiting pings | `notifyOnStop` | on | `stopWaitSeconds` (10s) | Pings you once Claude has been waiting on you |
+| Permission pings | `notifyOnPermission` | on | `permissionWaitSeconds` (0s) | Pings you when Claude needs approval |
+| Answer from phone | `answerFromPhone` | **off** | `answerWaitSeconds` (10s) | Buttons that decide the prompt, not just report it |
 
-Each is an independent toggle. The first two need nothing running. The third needs the **relay** —
-a background process bound to one Claude Code window, which never starts on its own.
+Each is an independent toggle **with its own delay**. Permission pings default to immediate: that
+prompt has already stopped Claude, so there is nothing to wait and see. The other two default to
+10s so a turn you sat and watched never buzzes you.
+
+The first two need nothing running. The third needs the **relay** — a background process bound to
+one Claude Code window, which never starts on its own.
 
 Requires Node ≥ 20.12. No runtime dependencies.
 
@@ -59,7 +63,7 @@ and nothing is sent, so a turn you sat and watched never buzzes you.
 ## Answering from your phone
 
 Turn on `answerFromPhone` and start the relay — `/claude-ping` → "let me answer from my phone".
-When Claude needs approval *and* the turn has already run for `waitSeconds`, the question goes to
+When Claude needs approval *and* the turn has already run for `answerWaitSeconds`, the question goes to
 Telegram:
 
 ```
@@ -72,7 +76,7 @@ npm run deploy
 [🖥 Answer at desktop]
 ```
 
-Tap and Claude carries on. If the turn is younger than `waitSeconds` the desktop prompts
+Tap and Claude carries on. If the turn is younger than `answerWaitSeconds` the desktop prompts
 immediately and your phone is never involved — you're clearly sitting there.
 
 For `AskUserQuestion`, Claude's own options are mirrored verbatim as buttons rather than reduced
@@ -102,7 +106,7 @@ window to start one claims it; every other window prompts on the desktop as usua
 | Command | |
 |---|---|
 | `/status` | Repos in play, each one's settings, and which holds the relay |
-| `/wait <seconds> [repo]` | Idle time before a question reaches your phone |
+| `/wait [waiting\|permission\|answer] <seconds> [repo]` | Delay before that ping reaches you |
 | `/mute [repo]` | Stop waiting pings |
 | `/unmute [repo]` | Resume them |
 | `/stop` | Shut the relay down |
@@ -119,11 +123,20 @@ substring matches zero or several repos it refuses rather than guessing.
 |---|---|---|---|
 | `botToken` | `TELEGRAM_BOT_TOKEN` | — | From @BotFather |
 | `chatId` | `TELEGRAM_CHAT_ID` | — | The only chat that can talk to it |
-| `waitSeconds` | `CLAUDE_PING_WAIT_SECONDS` | `10` | Idle seconds before your phone is involved |
+| `stopWaitSeconds` | `CLAUDE_PING_STOP_WAIT` | `10` | Idle seconds before a waiting ping |
+| `permissionWaitSeconds` | `CLAUDE_PING_PERMISSION_WAIT` | `0` | Delay before a permission ping (max 15) |
+| `answerWaitSeconds` | `CLAUDE_PING_ANSWER_WAIT` | `10` | Idle seconds before a question reaches your phone |
 | `notifyOnStop` | `CLAUDE_PING_NOTIFY_STOP` | `true` | Waiting pings |
 | `notifyOnPermission` | `CLAUDE_PING_NOTIFY_PERMISSION` | `true` | Permission pings |
 | `answerFromPhone` | `CLAUDE_PING_ANSWER_FROM_PHONE` | `false` | Answer prompts from Telegram |
 | `answerWindowSeconds` | `CLAUDE_PING_ANSWER_WINDOW` | `120` | Max time the phone holds a prompt |
+
+`permissionWaitSeconds` is capped at 15s: it is an inline sleep in the Notification hook, which
+Claude Code kills at 20s, so a longer value would lose the ping rather than delay it. The delay
+costs the session nothing — Claude is already stopped at the prompt.
+
+The older single `waitSeconds` is still read, and still drives the waiting and answer delays for
+any repo that has not set them individually, so existing configs keep the timing they had.
 
 Everything except the credentials is **per repo**, stored under `repos["/path/to/repo"]`.
 Resolution is *env var → this repo → global → default*. Settings written from the CLI go to the
@@ -135,7 +148,8 @@ turns"), or directly:
 ```bash
 node dist/src/setup.js status                     # this repo's effective settings
 node dist/src/setup.js on|off waiting|permission|answer [--global]
-node dist/src/setup.js wait <seconds> [--global]
+node dist/src/setup.js wait <seconds> [--global]                    # waiting + answer
+node dist/src/setup.js wait waiting|permission|answer <seconds> [--global]
 node dist/src/setup.js relay start <session-id> | relay | relay stop
 node dist/src/setup.js token <bot-token> | detect | chat <chat-id>
 node dist/src/setup.js test                       # send a test message

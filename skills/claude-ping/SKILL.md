@@ -12,9 +12,11 @@ Three independent features, each a toggle:
 
 | Feature | Key | Default | What it does |
 |---|---|---|---|
-| Waiting pings | `notifyOnStop` | on | Push when Claude has been waiting on you for `waitSeconds` |
+| Waiting pings | `notifyOnStop` | on | Push when Claude has been waiting on you for `stopWaitSeconds` |
 | Permission pings | `notifyOnPermission` | on | Push when Claude needs approval |
 | Answer from phone | `answerFromPhone` | **off** | Buttons that actually decide the prompt, not just tell you about it |
+
+Each feature has its own delay — `stopWaitSeconds` (10s), `permissionWaitSeconds` (0s, capped at 15), `answerWaitSeconds` (10s). "Too noisy" almost always means raising one of these rather than turning a feature off. Permission pings are immediate by default because that prompt has already stopped Claude.
 
 The first two are pure notification and need nothing running. The third needs the **relay** — a background process bound to one session that owns the Telegram connection.
 
@@ -28,7 +30,7 @@ Every command prints one JSON object. Branch on it; don't parse prose.
 node "$PLUGIN/dist/src/setup.js" status
 ```
 
-Reports `configured`, the three toggles, `waitSeconds`, `answerWindowSeconds`, and `relay` (null when none is running).
+Reports `configured`, the three toggles, all three delays, `answerWindowSeconds`, and `relay` (null when none is running). Also `repoOverrides` and `globals`, so you can tell a repo-level setting from a global one.
 
 - `configured: false` → §2.
 - `configured: true` → §3 if they're asking to change something, §4 if they want phone answering.
@@ -64,7 +66,8 @@ The chat id is also the access control: messages from any other chat are ignored
 ```sh
 node "$PLUGIN/dist/src/setup.js" on  waiting|permission|answer [--global]
 node "$PLUGIN/dist/src/setup.js" off waiting|permission|answer [--global]
-node "$PLUGIN/dist/src/setup.js" wait <seconds> [--global]     # waitSeconds
+node "$PLUGIN/dist/src/setup.js" wait <seconds> [--global]                     # waiting + answer
+node "$PLUGIN/dist/src/setup.js" wait waiting|permission|answer <secs> [--global]
 ```
 
 **These write the current repo, not every repo.** Resolution is env → this repo → global → default. Use `--global` only when the user means "everywhere" — a default for projects not yet seen — and say which scope you wrote, because "I turned it on" is ambiguous otherwise. `status` reports this repo's effective values plus `repoOverrides` and `globals` so you can tell "on here" from "on everywhere" without reading the file.
@@ -75,8 +78,8 @@ Toggles apply to the next turn — each hook run re-reads the config, nothing re
 
 Mapping complaints:
 
-- **"too noisy"** → raise `waitSeconds`, or `off waiting` to keep only approvals.
-- **"the instant a turn ends"** → `wait 0`.
+- **"too noisy"** → raise the delay for the feature that is actually firing (`wait waiting 120`), or `off waiting` to keep only approvals. Ask which pings are the problem before changing all of them.
+- **"the instant a turn ends"** → `wait waiting 0`.
 - **"still pinged after turning finish-pings off"** → they're on a build from before waiting/permission were split by *what the user is told* rather than by which hook fired. Reinstall.
 
 ## 4. Answer from phone — the relay
@@ -99,7 +102,7 @@ Starting and stopping both post a notice to Telegram (🟢 / 🔴), so the user 
 
 **One session owns Telegram.** getUpdates admits a single consumer per bot token, so the first session to start a relay claims it; others prompt on the desktop as usual and `relay start` reports who holds it. That is not an error — say which session has it.
 
-**What the user sees.** When Claude needs approval *and* the turn has been running at least `waitSeconds` (so they'd plausibly left), the question goes to Telegram:
+**What the user sees.** When Claude needs approval *and* the turn has been running at least `answerWaitSeconds` (so they'd plausibly left), the question goes to Telegram:
 
 - ✅ Approve
 - ⛔️ Reject — a bare verdict; nothing is passed back with it
@@ -109,7 +112,7 @@ Starting and stopping both post a notice to Telegram (🟢 / 🔴), so the user 
 
 There is deliberately no "don't ask again": `permissionDecision` is one-shot, so such a button would claim to persist something it doesn't. If the user asks for it, say that plainly — it needs a permission rule written to settings, which isn't built yet.
 
-If the turn is younger than `waitSeconds` the desktop prompts immediately with no phone involvement, because they're watching it.
+If the turn is younger than `answerWaitSeconds` the desktop prompts immediately with no phone involvement, because they're watching it.
 
 For `AskUserQuestion`, Claude's own options are mirrored verbatim as buttons. Multi-select and multi-question prompts fall back to the desktop — a single tap can't express those.
 

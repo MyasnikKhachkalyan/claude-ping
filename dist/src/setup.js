@@ -6,7 +6,7 @@ import { mkdirSync, openSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONFIG_DIR, CONFIG_FILE, configFor, disableAnswerFromPhone, freshConfig, saveConfig, saveTunable, } from './config.js';
+import { CONFIG_DIR, CONFIG_FILE, MAX_PERMISSION_WAIT, WAIT_KEYS, configFor, disableAnswerFromPhone, freshConfig, saveConfig, saveTunable, } from './config.js';
 import { repoKey, repoLabel } from './repo.js';
 import { clearStaleClaim, findClientPid, liveOwner, ownsRelay, releaseOwnership, shouldStopRelay, } from './owner.js';
 const RELAY = join(dirname(fileURLToPath(import.meta.url)), 'relay.js');
@@ -51,7 +51,9 @@ switch (cmd) {
             repo: repoLabel(process.cwd()),
             repoPath: here,
             // Effective values for this repo — env var over repo override over global.
-            waitSeconds: effective.waitSeconds,
+            stopWaitSeconds: effective.stopWaitSeconds,
+            permissionWaitSeconds: effective.permissionWaitSeconds,
+            answerWaitSeconds: effective.answerWaitSeconds,
             notifyOnStop: effective.notifyOnStop,
             notifyOnPermission: effective.notifyOnPermission,
             answerFromPhone: effective.answerFromPhone,
@@ -59,6 +61,9 @@ switch (cmd) {
             // So the skill can tell "on here" from "on everywhere" without re-reading the file.
             repoOverrides: (here && cfg.repos?.[here]) ?? {},
             globals: {
+                stopWaitSeconds: cfg.stopWaitSeconds ?? null,
+                permissionWaitSeconds: cfg.permissionWaitSeconds ?? null,
+                answerWaitSeconds: cfg.answerWaitSeconds ?? null,
                 waitSeconds: cfg.waitSeconds ?? null,
                 notifyOnStop: cfg.notifyOnStop ?? null,
                 notifyOnPermission: cfg.notifyOnPermission ?? null,
@@ -194,26 +199,45 @@ switch (cmd) {
         out(owner ? { ok: true, running: true, ...owner } : { ok: true, running: false });
         break;
     }
+    // Each feature has its own delay. Naming one sets it alone; omitting the name sets the two
+    // that answer "how long before my phone is involved", which is what `wait <n>` always meant.
     case 'wait': {
-        const secs = Number(arg);
-        if (arg === undefined || arg === '' || !Number.isFinite(secs) || secs < 0) {
+        const which = WAIT_KEYS[arg ?? ''] ? arg : undefined;
+        const rawSecs = which ? process.argv[4] : arg;
+        const secs = Number(rawSecs);
+        if (rawSecs === undefined || rawSecs === '' || !Number.isFinite(secs) || secs < 0) {
             out({
                 ok: false,
-                error: 'Usage: setup.js wait <seconds> [--global]   (0 = ping the moment a turn ends)',
+                error: 'Usage: setup.js wait [waiting|permission|answer] <seconds> [--global]   (0 = no delay)',
             });
             process.exit(1);
         }
-        saveTunable(target, { waitSeconds: secs });
+        const capped = which === 'permission' ? Math.min(secs, MAX_PERMISSION_WAIT) : secs;
+        const patch = which
+            ? { [WAIT_KEYS[which]]: capped }
+            : { stopWaitSeconds: secs, answerWaitSeconds: secs };
+        saveTunable(target, patch);
+        const envFor = {
+            waiting: 'CLAUDE_PING_STOP_WAIT',
+            permission: 'CLAUDE_PING_PERMISSION_WAIT',
+            answer: 'CLAUDE_PING_ANSWER_WAIT',
+        };
+        const shadowing = Object.entries(envFor)
+            .filter(([k]) => !which || k === which)
+            .map(([, v]) => v)
+            .concat('CLAUDE_PING_WAIT_SECONDS')
+            .filter((v) => process.env[v]);
         out({
             ok: true,
-            waitSeconds: secs,
+            set: patch,
             scope: scopeName,
             repoPath: target,
             saved: CONFIG_FILE,
             note: 'Applies to the next turn — no restart needed.',
-            ...(process.env['CLAUDE_PING_WAIT_SECONDS']
-                ? { warning: 'CLAUDE_PING_WAIT_SECONDS is set and overrides this file.' }
+            ...(capped !== secs
+                ? { capped: `permission pings are held inline by the hook, so ${MAX_PERMISSION_WAIT}s is the ceiling` }
                 : {}),
+            ...(shadowing.length ? { warning: `${shadowing.join(', ')} is set and overrides this file.` } : {}),
         });
         break;
     }
@@ -306,7 +330,7 @@ switch (cmd) {
                 'token <bot-token>',
                 'detect',
                 'chat <chat-id>',
-                'wait <seconds>',
+                'wait [waiting|permission|answer] <seconds>',
                 'on <waiting|permission|answer>',
                 'off <waiting|permission|answer>',
                 'relay [start <session-id>|stop]',

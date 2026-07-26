@@ -24,6 +24,21 @@ if (existsSync(envPath) && typeof process.loadEnvFile === 'function') {
         // A malformed .env must not take down a hook running in someone's session.
     }
 }
+/**
+ * The longest a permission ping may be held back.
+ *
+ * That delay is an inline sleep in the Notification hook, which Claude Code kills at 20s. It costs
+ * the session nothing — a permission prompt has already stopped it — but the hook must return
+ * before the timeout or the ping is lost entirely. Long delays make little sense here anyway:
+ * Claude is blocked for the whole of it.
+ */
+export const MAX_PERMISSION_WAIT = 15;
+/** The three delays, keyed by the same words the on/off toggles use. */
+export const WAIT_KEYS = {
+    waiting: 'stopWaitSeconds',
+    permission: 'permissionWaitSeconds',
+    answer: 'answerWaitSeconds',
+};
 function readConfigFile() {
     try {
         return JSON.parse(readFileSync(CONFIG_FILE, 'utf8'));
@@ -37,10 +52,16 @@ const pick = (envName, key) => process.env[envName] ?? file[key];
 const str = (v) => v === undefined || v === '' ? undefined : String(v);
 const num = (v, fallback) => Number.isFinite(Number(v)) && v !== undefined && v !== '' ? Number(v) : fallback;
 const bool = (v, fallback) => v === undefined ? fallback : v === '1' || v === 'true' || v === true;
+/**
+ * The global layer on its own, for callers with no repo in hand. Anything that knows its cwd
+ * should use configFor() instead, or a per-repo override will be ignored.
+ */
 export const config = {
     botToken: str(pick('TELEGRAM_BOT_TOKEN', 'botToken')),
     chatId: str(pick('TELEGRAM_CHAT_ID', 'chatId')),
-    waitSeconds: num(pick('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), 10),
+    stopWaitSeconds: num(pick('CLAUDE_PING_STOP_WAIT', 'stopWaitSeconds') ?? pick('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), 10),
+    permissionWaitSeconds: Math.min(num(pick('CLAUDE_PING_PERMISSION_WAIT', 'permissionWaitSeconds'), 0), MAX_PERMISSION_WAIT),
+    answerWaitSeconds: num(pick('CLAUDE_PING_ANSWER_WAIT', 'answerWaitSeconds') ?? pick('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), 10),
     notifyOnStop: bool(pick('CLAUDE_PING_NOTIFY_STOP', 'notifyOnStop'), true),
     notifyOnPermission: bool(pick('CLAUDE_PING_NOTIFY_PERMISSION', 'notifyOnPermission'), true),
     // Off by default: answering from a phone is a bigger step than being told, and it must be
@@ -125,10 +146,24 @@ export function disableAnswerFromPhone() {
 export function configFor(repoPath) {
     const over = (repoPath && file.repos?.[repoPath]) || {};
     const pickR = (envName, key) => process.env[envName] ?? over[key] ?? file[key];
+    /**
+     * A per-feature delay, falling back to the old single `waitSeconds` when this feature has no
+     * value of its own. That fallback is what stops the split from silently retiming anyone who
+     * had already tuned `waitSeconds`; it does not apply to permission pings, which that setting
+     * never drove.
+     */
+    const waitFor = (envName, key, fallback) => {
+        const own = pickR(envName, key);
+        if (own !== undefined && own !== '')
+            return num(own, fallback);
+        return num(pickR('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), fallback);
+    };
     return {
         botToken: config.botToken,
         chatId: config.chatId,
-        waitSeconds: num(pickR('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), 10),
+        stopWaitSeconds: waitFor('CLAUDE_PING_STOP_WAIT', 'stopWaitSeconds', 10),
+        permissionWaitSeconds: Math.min(num(pickR('CLAUDE_PING_PERMISSION_WAIT', 'permissionWaitSeconds'), 0), MAX_PERMISSION_WAIT),
+        answerWaitSeconds: waitFor('CLAUDE_PING_ANSWER_WAIT', 'answerWaitSeconds', 10),
         notifyOnStop: bool(pickR('CLAUDE_PING_NOTIFY_STOP', 'notifyOnStop'), true),
         notifyOnPermission: bool(pickR('CLAUDE_PING_NOTIFY_PERMISSION', 'notifyOnPermission'), true),
         answerFromPhone: bool(pickR('CLAUDE_PING_ANSWER_FROM_PHONE', 'answerFromPhone'), false),

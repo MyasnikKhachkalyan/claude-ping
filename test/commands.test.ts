@@ -14,18 +14,33 @@ const repo = (name: string, lastSeenAgoMin = 0) => ({
 
 const settings = (rp: string | null) =>
   rp === '/w/website'
-    ? { waitSeconds: 60, notifyOnStop: false, notifyOnPermission: true, answerFromPhone: true }
-    : { waitSeconds: 10, notifyOnStop: true, notifyOnPermission: true, answerFromPhone: false };
+    ? {
+        stopWaitSeconds: 60,
+        permissionWaitSeconds: 5,
+        answerWaitSeconds: 90,
+        notifyOnStop: false,
+        notifyOnPermission: true,
+        answerFromPhone: true,
+      }
+    : {
+        stopWaitSeconds: 10,
+        permissionWaitSeconds: 0,
+        answerWaitSeconds: 10,
+        notifyOnStop: true,
+        notifyOnPermission: true,
+        answerFromPhone: false,
+      };
 
 test('status: lists each repo with its own settings', () => {
   const out = formatStatus([repo('website'), repo('claude-ping', 9)], settings, null, NOW);
   assert.match(out, /website/);
   assert.match(out, /claude-ping/);
   // The point of per-repo config: the same field reads differently per project.
-  assert.match(out, /waiting pings: off/);
-  assert.match(out, /waiting pings: on/);
-  assert.match(out, /wait: 60s/);
-  assert.match(out, /wait: 10s/);
+  assert.match(out, /waiting pings: off after 60s/);
+  assert.match(out, /waiting pings: on after 10s/);
+  // Each feature carries its own delay, so one repo shows three different numbers.
+  assert.match(out, /permission pings: on after 5s/);
+  assert.match(out, /answer from phone: on after 90s/);
 });
 
 test('status: reports whether the relay is up, and where', () => {
@@ -52,7 +67,14 @@ test('status: the repo holding the relay is marked, the others are qualified', (
   const withPid = (name: string, pid: number) => ({ ...repo(name), clientPid: pid });
   const out = formatStatus(
     [withPid('claude-ping', 100), withPid('spygames-bombpass', 200)],
-    () => ({ waitSeconds: 10, notifyOnStop: false, notifyOnPermission: false, answerFromPhone: true }),
+    () => ({
+      stopWaitSeconds: 10,
+      permissionWaitSeconds: 0,
+      answerWaitSeconds: 10,
+      notifyOnStop: false,
+      notifyOnPermission: false,
+      answerFromPhone: true,
+    }),
     { cwd: '/w/claude-ping', pid: 9, repo: 'claude-ping', clientPid: 100 },
     NOW,
   );

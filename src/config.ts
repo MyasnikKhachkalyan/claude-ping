@@ -27,9 +27,30 @@ if (existsSync(envPath) && typeof process.loadEnvFile === 'function') {
   }
 }
 
+/**
+ * The longest a permission ping may be held back.
+ *
+ * That delay is an inline sleep in the Notification hook, which Claude Code kills at 20s. It costs
+ * the session nothing — a permission prompt has already stopped it — but the hook must return
+ * before the timeout or the ping is lost entirely. Long delays make little sense here anyway:
+ * Claude is blocked for the whole of it.
+ */
+export const MAX_PERMISSION_WAIT = 15;
+
+/** The three delays, keyed by the same words the on/off toggles use. */
+export const WAIT_KEYS: Record<string, keyof Tunables | undefined> = {
+  waiting: 'stopWaitSeconds',
+  permission: 'permissionWaitSeconds',
+  answer: 'answerWaitSeconds',
+};
+
 /** Settings that can differ per repo. Credentials deliberately cannot. */
 export interface Tunables {
+  /** Superseded by the three below; still read so existing configs keep their timing. */
   waitSeconds?: number;
+  stopWaitSeconds?: number;
+  permissionWaitSeconds?: number;
+  answerWaitSeconds?: number;
   notifyOnStop?: boolean;
   notifyOnPermission?: boolean;
   answerFromPhone?: boolean;
@@ -46,8 +67,17 @@ export interface FileConfig extends Tunables {
 export interface Config {
   botToken: string | undefined;
   chatId: string | undefined;
-  /** Seconds Claude may sit waiting on you before your phone is involved. */
-  waitSeconds: number;
+  /**
+   * One delay per feature, because they answer different questions.
+   *
+   * A waiting ping asks "have you wandered off?", so it wants long enough that a turn you sat and
+   * watched never buzzes. A permission ping is about a prompt that has already stopped Claude, so
+   * it defaults to immediate. Phone answering is the same question as the waiting ping but with a
+   * bigger consequence — a decision leaves the keyboard — so it is worth setting separately.
+   */
+  stopWaitSeconds: number;
+  permissionWaitSeconds: number;
+  answerWaitSeconds: number;
   /** Tell me when Claude is waiting on me. */
   notifyOnStop: boolean;
   /** Tell me when Claude needs approval. */
@@ -80,10 +110,25 @@ const num = (v: string | number | boolean | undefined, fallback: number): number
 const bool = (v: string | number | boolean | undefined, fallback: boolean): boolean =>
   v === undefined ? fallback : v === '1' || v === 'true' || v === true;
 
+/**
+ * The global layer on its own, for callers with no repo in hand. Anything that knows its cwd
+ * should use configFor() instead, or a per-repo override will be ignored.
+ */
 export const config: Config = {
   botToken: str(pick('TELEGRAM_BOT_TOKEN', 'botToken')),
   chatId: str(pick('TELEGRAM_CHAT_ID', 'chatId')),
-  waitSeconds: num(pick('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), 10),
+  stopWaitSeconds: num(
+    pick('CLAUDE_PING_STOP_WAIT', 'stopWaitSeconds') ?? pick('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'),
+    10,
+  ),
+  permissionWaitSeconds: Math.min(
+    num(pick('CLAUDE_PING_PERMISSION_WAIT', 'permissionWaitSeconds'), 0),
+    MAX_PERMISSION_WAIT,
+  ),
+  answerWaitSeconds: num(
+    pick('CLAUDE_PING_ANSWER_WAIT', 'answerWaitSeconds') ?? pick('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'),
+    10,
+  ),
   notifyOnStop: bool(pick('CLAUDE_PING_NOTIFY_STOP', 'notifyOnStop'), true),
   notifyOnPermission: bool(pick('CLAUDE_PING_NOTIFY_PERMISSION', 'notifyOnPermission'), true),
   // Off by default: answering from a phone is a bigger step than being told, and it must be
@@ -181,10 +226,28 @@ export function configFor(repoPath: string | null | undefined): Config {
   const over: Tunables = (repoPath && file.repos?.[repoPath]) || {};
   const pickR = (envName: string, key: keyof Tunables) =>
     process.env[envName] ?? (over[key] as string | number | boolean | undefined) ?? (file[key] as string | number | boolean | undefined);
+
+  /**
+   * A per-feature delay, falling back to the old single `waitSeconds` when this feature has no
+   * value of its own. That fallback is what stops the split from silently retiming anyone who
+   * had already tuned `waitSeconds`; it does not apply to permission pings, which that setting
+   * never drove.
+   */
+  const waitFor = (envName: string, key: keyof Tunables, fallback: number): number => {
+    const own = pickR(envName, key);
+    if (own !== undefined && own !== '') return num(own, fallback);
+    return num(pickR('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), fallback);
+  };
+
   return {
     botToken: config.botToken,
     chatId: config.chatId,
-    waitSeconds: num(pickR('CLAUDE_PING_WAIT_SECONDS', 'waitSeconds'), 10),
+    stopWaitSeconds: waitFor('CLAUDE_PING_STOP_WAIT', 'stopWaitSeconds', 10),
+    permissionWaitSeconds: Math.min(
+      num(pickR('CLAUDE_PING_PERMISSION_WAIT', 'permissionWaitSeconds'), 0),
+      MAX_PERMISSION_WAIT,
+    ),
+    answerWaitSeconds: waitFor('CLAUDE_PING_ANSWER_WAIT', 'answerWaitSeconds', 10),
     notifyOnStop: bool(pickR('CLAUDE_PING_NOTIFY_STOP', 'notifyOnStop'), true),
     notifyOnPermission: bool(pickR('CLAUDE_PING_NOTIFY_PERMISSION', 'notifyOnPermission'), true),
     answerFromPhone: bool(pickR('CLAUDE_PING_ANSWER_FROM_PHONE', 'answerFromPhone'), false),

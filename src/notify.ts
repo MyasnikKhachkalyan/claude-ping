@@ -19,7 +19,7 @@ import {
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, configFor, isConfigured } from './config.js';
+import { MAX_PERMISSION_WAIT, configFor, isConfigured } from './config.js';
 import { repoKey, repoLabel } from './repo.js';
 import { recordSession } from './registry.js';
 import {
@@ -160,7 +160,11 @@ function armTimer(sessionId: string, nonce: string): void {
 }
 
 async function runTimer(sessionId: string, nonce: string): Promise<void> {
-  await new Promise((r) => setTimeout(r, config.waitSeconds * 1000));
+  // Read before sleeping, not after: the marker is what says which repo this turn belongs to, and
+  // without it the delay would come from the global setting even where the repo overrode it.
+  const armed = readWaitMarker(sessionId);
+  if (!shouldFire(armed, nonce)) return;
+  await new Promise((r) => setTimeout(r, configFor(repoKey(armed?.cwd)).stopWaitSeconds * 1000));
 
   const marker = readWaitMarker(sessionId);
   // You replied (marker deleted) or a newer turn re-armed it (nonce moved on).
@@ -205,8 +209,13 @@ async function handleHook(): Promise<void> {
     // The idle variant is redundant with our own Stop timer, which fires sooner and says more.
     // Dropping it also means notifyOnStop:false genuinely silences every "waiting on you" ping.
     if (classifyNotification(ev.message) === 'waiting') return;
-    // A permission prompt blocks Claude right now; there is nothing to wait and see.
     if (!settings.notifyOnPermission || !isConfigured()) return;
+    // Immediate by default: a permission prompt has already stopped Claude, so there is nothing
+    // to wait and see. A delay is still worth having — it filters out the prompts you approve in
+    // three seconds because you are sitting right there — so it is a plain sleep, which costs the
+    // session nothing while it is blocked anyway. Capped so the hook returns before its timeout.
+    const hold = Math.min(settings.permissionWaitSeconds, MAX_PERMISSION_WAIT);
+    if (hold > 0) await new Promise((r) => setTimeout(r, hold * 1000));
     await send(formatNotification({ cwd: ev.cwd, message: ev.message }));
     return;
   }

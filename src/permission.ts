@@ -182,9 +182,9 @@ async function main(): Promise<void> {
   };
 
   // The clock starts when *this question* is asked, not when the turn began. Sit on it for
-  // waitSeconds first so a prompt you're about to answer anyway never buzzes your phone; only
-  // one that has gone unanswered that long is worth sending.
-  await sleep(settings.waitSeconds * 1000);
+  // answerWaitSeconds first so a prompt you're about to answer anyway never buzzes your phone;
+  // only one that has gone unanswered that long is worth sending.
+  await sleep(settings.answerWaitSeconds * 1000);
 
   postQuestion(question);
 
