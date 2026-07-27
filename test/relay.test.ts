@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { answeredText, keyboardFor, parseCallback, renderQuestion } from '../src/relay.js';
+import { answeredText, keyboardFor, parseCallback, renderQuestion, vanishedNotice } from '../src/relay.js';
 import type { Question } from '../src/protocol.js';
 
 const permission: Question = {
@@ -11,6 +11,7 @@ const permission: Question = {
   title: 'Bash',
   detail: 'npm run deploy',
   createdAt: 0,
+  expiresAt: 0,
 };
 
 const choice: Question = {
@@ -25,6 +26,7 @@ const choice: Question = {
     { id: '1', label: 'SQLite' },
   ],
   createdAt: 0,
+  expiresAt: 0,
 };
 
 test('render: a permission names the project, tool, and what will run', () => {
@@ -117,4 +119,17 @@ test('answeredText: separates the outcome from the question', () => {
   const out = answeredText('Q', 'S');
   assert.notEqual(out, 'QS');
   assert.ok(out.includes('\n'));
+});
+
+// A question that leaves the phone without a tap did so for one of two reasons, and they read
+// very differently: the hook now drops its question the moment it sees the desktop answer, so
+// "Expired" would be a lie in the case this exists to cover.
+test('retraction: vanishing before the deadline reads as answered at the desktop', () => {
+  assert.match(vanishedNotice(1000, 999), /desktop/);
+  assert.doesNotMatch(vanishedNotice(1000, 999), /Expired/);
+});
+
+test('retraction: vanishing at or after the deadline reads as expired', () => {
+  assert.match(vanishedNotice(1000, 1000), /Expired/);
+  assert.match(vanishedNotice(1000, 5000), /Expired/);
 });

@@ -6,22 +6,12 @@
 // The clock that matters is how long *Claude* has been waiting on *you*, which is
 // unknowable at the moment a turn ends. So Stop arms a detached timer instead of
 // deciding immediately, and the next prompt you send disarms it.
-import {
-  openSync,
-  readSync,
-  fstatSync,
-  closeSync,
-  mkdirSync,
-  writeFileSync,
-  readFileSync,
-  rmSync,
-} from 'node:fs';
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MAX_PERMISSION_WAIT, configFor, isConfigured } from './config.js';
 import { repoKey, repoLabel } from './repo.js';
 import { recordSession } from './registry.js';
+import { tailLines } from './transcript.js';
 import {
   clearWaitMarker,
   readWaitMarker,
@@ -30,8 +20,6 @@ import {
   type WaitMarker,
 } from './turnstate.js';
 import { send } from './telegram.js';
-
-const TAIL_BYTES = 256 * 1024;
 
 /** The JSON Claude Code writes to a hook's stdin. */
 export interface HookEvent {
@@ -63,49 +51,27 @@ function readStdin(): Promise<string> {
   });
 }
 
-// Only the tail is read: transcripts grow to many MB and a hook must stay fast.
 export function lastAssistantText(transcriptPath: string | undefined): string {
-  if (!transcriptPath) return '';
-  let fd: number | undefined;
-  try {
-    fd = openSync(transcriptPath, 'r');
-    const { size } = fstatSync(fd);
-    const len = Math.min(size, TAIL_BYTES);
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    const lines = buf.toString('utf8').split('\n');
-    // A partial first line is expected when the file was longer than the tail.
-    if (size > TAIL_BYTES) lines.shift();
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i];
-      if (!line) continue;
-      let entry: TranscriptEntry;
-      try {
-        entry = JSON.parse(line) as TranscriptEntry;
-      } catch {
-        continue;
-      }
-      if (entry?.type !== 'assistant') continue;
-      const content = entry.message?.content;
-      if (!Array.isArray(content)) continue;
-      const text = content
-        .filter((b) => b?.type === 'text' && b.text?.trim())
-        .map((b) => (b.text as string).trim())
-        .join('\n');
-      if (text) return text;
+  const lines = tailLines(transcriptPath);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let entry: TranscriptEntry;
+    try {
+      entry = JSON.parse(line) as TranscriptEntry;
+    } catch {
+      continue;
     }
-    return '';
-  } catch {
-    return '';
-  } finally {
-    if (fd !== undefined) {
-      try {
-        closeSync(fd);
-      } catch {
-        // Best effort.
-      }
-    }
+    if (entry?.type !== 'assistant') continue;
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    const text = content
+      .filter((b) => b?.type === 'text' && b.text?.trim())
+      .map((b) => (b.text as string).trim())
+      .join('\n');
+    if (text) return text;
   }
+  return '';
 }
 
 export function truncate(text: string | undefined, max = 600): string {

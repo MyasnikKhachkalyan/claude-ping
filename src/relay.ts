@@ -7,7 +7,7 @@
 import { basename } from 'node:path';
 import { MAX_PERMISSION_WAIT, WAIT_KEYS, configFor, isConfigured, saveTunable } from './config.js';
 import { listRepos } from './registry.js';
-import { repoKey, repoLabel } from './repo.js';
+import { repoLabel } from './repo.js';
 import { readOwner } from './owner.js';
 import { claimOwnership, isAlive, releaseOwnership } from './owner.js';
 import * as tg from './telegram.js';
@@ -52,6 +52,8 @@ async function shutdown(reason: string): Promise<void> {
 interface Shown {
   messageId: number;
   text: string;
+  /** The hook's own deadline, so a question that vanishes early can be told from one that lapsed. */
+  expiresAt: number;
 }
 const shown = new Map<string, Shown>();
 
@@ -86,11 +88,9 @@ export function keyboardFor(q: Question): { inline_keyboard: { text: string; cal
 async function publishNewQuestions(): Promise<void> {
   for (const q of listQuestions()) {
     // A hook that died without cleaning up leaves its question behind. Sending those would put
-    // dead buttons on the phone and, after a relay restart, replay questions already answered
-    // at the desktop. The margin covers clock skew between the hook and this process.
-    // Per repo, since the window that posted this question is the one whose setting applies.
-    const window = configFor(repoKey(q.cwd)).answerWindowSeconds;
-    if (Date.now() - q.createdAt > (window + 30) * 1000) {
+    // dead buttons on the phone and, after a relay restart, replay questions already answered at
+    // the desktop. A question with no deadline predates the field, so no live hook holds it.
+    if (Date.now() > (q.expiresAt || 0)) {
       clearQuestion(q.id);
       void expire(q.id);
       continue;
@@ -99,14 +99,16 @@ async function publishNewQuestions(): Promise<void> {
     try {
       const text = renderQuestion(q);
       const sent = await tg.send(text, { reply_markup: keyboardFor(q) });
-      if (sent) shown.set(q.id, { messageId: sent.message_id, text });
+      if (sent) shown.set(q.id, { messageId: sent.message_id, text, expiresAt: q.expiresAt });
     } catch (err) {
       console.error('relay: could not send question:', (err as Error).message);
     }
   }
-  // A question that vanished was answered or timed out; stop tracking its message.
+  // A question that vanished was settled somewhere else; stop tracking its message and say so.
   const live = new Set(listQuestions().map((q) => q.id));
-  for (const id of shown.keys()) if (!live.has(id)) void expire(id);
+  for (const [id, entry] of shown) {
+    if (!live.has(id)) void finalise(id, vanishedNotice(entry.expiresAt, Date.now()));
+  }
 }
 
 /** The question as sent, with its outcome appended and the buttons stripped. */
@@ -124,6 +126,20 @@ async function finalise(id: string, status: string): Promise<void> {
   } catch {
     // Message deleted or too old to edit; nothing to salvage.
   }
+}
+
+/**
+ * Why a question left the phone without a tap.
+ *
+ * Disappearing before its hook's deadline means the keyboard got there first — which now happens
+ * on purpose, since a hook that sees the desktop answer drops its question to pull it back off the
+ * phone. No margin is needed either way: both clocks are this machine's, and a hook that does run
+ * out only clears the question at or after the moment it published as the deadline.
+ */
+export function vanishedNotice(expiresAt: number, now: number): string {
+  return now < expiresAt
+    ? '🖥 Answered at the desktop.'
+    : '⌛ Expired — answer at the desktop.';
 }
 
 async function expire(id: string): Promise<void> {

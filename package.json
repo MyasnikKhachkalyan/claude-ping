@@ -1,6 +1,6 @@
 {
   "name": "claude-ping",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Telegram notifications and remote control for Claude Code: get pinged when Claude waits for you, and reply from your phone.",

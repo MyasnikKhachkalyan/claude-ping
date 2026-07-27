@@ -14,6 +14,7 @@ import { configFor, isConfigured } from './config.js';
 import { repoKey } from './repo.js';
 import { recordSession } from './registry.js';
 import { clearStaleClaim, ownsRelay } from './owner.js';
+import { desktopWatch } from './settled.js';
 import { clearQuestion, newId, postQuestion, takeAnswer, windowExpired, } from './protocol.js';
 const POLL_MS = 200;
 // hookSpecificOutput is a tagged union: without hookEventName naming the event it belongs to,
@@ -131,20 +132,41 @@ async function main() {
         title: mirrored ? mirrored.title : toolName,
         detail: mirrored ? mirrored.detail : describeTool(toolName, ev.tool_input),
         createdAt: Date.now(),
+        // Overwritten with the real deadline once the wait is over and the window actually opens.
+        expiresAt: 0,
         ...(ev.cwd ? { cwd: ev.cwd } : {}),
         ...(mirrored ? { choices: mirrored.choices } : {}),
     };
     // The clock starts when *this question* is asked, not when the turn began. Sit on it for
     // answerWaitSeconds first so a prompt you're about to answer anyway never buzzes your phone;
     // only one that has gone unanswered that long is worth sending.
-    await sleep(settings.answerWaitSeconds * 1000);
-    postQuestion(question);
+    //
+    // Answering it at the keyboard during that hold is the ordinary case, and it has to end the
+    // wait. Claude Code leaves this hook running when the dialog wins the race, so without the
+    // check the phone gets a question that was decided seconds ago and buttons that do nothing.
+    const settledAtDesktop = desktopWatch(ev.transcript_path, toolName, ev.tool_input);
+    const holdUntil = Date.now() + settings.answerWaitSeconds * 1000;
+    for (let left = holdUntil - Date.now(); left > 0; left = holdUntil - Date.now()) {
+        if (settledAtDesktop())
+            return emit({});
+        await sleep(Math.min(POLL_MS, left));
+    }
+    if (settledAtDesktop())
+        return emit({});
     const postedAt = Date.now();
+    question.expiresAt = postedAt + settings.answerWindowSeconds * 1000;
+    postQuestion(question);
     for (;;) {
         const answer = takeAnswer(question.id);
         if (answer) {
             clearQuestion(question.id);
             return emit(decide(answer, toolName, question));
+        }
+        // Answered at the keyboard after all, while the phone was holding it. Dropping the question is
+        // what takes it off the phone: the relay retracts any question that stops being pending.
+        if (settledAtDesktop()) {
+            clearQuestion(question.id);
+            return emit({});
         }
         if (windowExpired(postedAt, settings.answerWindowSeconds, Date.now())) {
             clearQuestion(question.id);

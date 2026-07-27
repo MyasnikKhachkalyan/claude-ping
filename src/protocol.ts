@@ -31,6 +31,14 @@ export interface Question {
   /** Only set for 'choice': Claude's own options, mirrored verbatim. */
   choices?: Choice[];
   createdAt: number;
+  /**
+   * When the hook waiting on this gives up and hands the prompt back to the keyboard.
+   *
+   * Stamped by the hook rather than recomputed by the relay: only the hook knows when its window
+   * actually started, and a question that disappears before this moment must have been settled at
+   * the desktop rather than run out of time.
+   */
+  expiresAt: number;
 }
 
 export type AnswerChoice = 'yes' | 'no' | 'desktop' | 'choice';

@@ -76,8 +76,15 @@ npm run deploy
 [🖥 Answer at desktop]
 ```
 
-Tap and Claude carries on. If the turn is younger than `answerWaitSeconds` the desktop prompts
-immediately and your phone is never involved — you're clearly sitting there.
+Tap and Claude carries on. The desktop dialog is up the whole time — `answerWaitSeconds` only
+governs when your phone is *also* involved, so a prompt you answer at the keyboard within that
+window never buzzes it.
+
+Answering at the desktop is watched for, not assumed. Claude Code runs the permission hook
+alongside its own dialog and never tells the loser of that race, so the plugin follows the
+transcript instead: the moment the tool call picks up a result, the question is dropped. Before the
+send that means nothing is sent at all; after it, the Telegram message is retracted and marked
+🖥 answered at the desktop rather than left showing buttons that no longer decide anything.
 
 For `AskUserQuestion`, Claude's own options are mirrored verbatim as buttons rather than reduced
 to yes/no. Multi-select and multi-question prompts fall back to the desktop, since one tap can't
@@ -196,6 +203,8 @@ npm test            # build, then node:test against dist/
 | `permission.ts` | `PermissionRequest` — decides whether to involve the phone, then waits |
 | `relay.ts` | Owns the Telegram connection; turns questions into buttons, taps into answers |
 | `protocol.ts` | The file protocol between hooks and the relay |
+| `settled.ts` | Spots a request the desktop already answered, so it never reaches the phone |
+| `transcript.ts` | Tail-reading the session transcript |
 | `owner.ts` | Which window owns Telegram |
 | `registry.ts` | Which sessions are in play, for `/status` |
 | `config.ts` | Settings, including the per-repo layering |

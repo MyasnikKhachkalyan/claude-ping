@@ -10,7 +10,7 @@
     {
       "name": "claude-ping",
       "source": "./",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Telegram tells you when Claude Code is waiting on you or needs approval, and lets you answer from your phone",
       "author": {
         "name": "Myasnik Khachkalyan",

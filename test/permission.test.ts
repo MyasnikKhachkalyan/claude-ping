@@ -11,6 +11,7 @@ const permissionQuestion = (title = 'Bash'): Question => ({
   title,
   detail: 'npm run deploy',
   createdAt: 0,
+  expiresAt: 0,
 });
 
 test('describeTool: Bash shows the command', () => {
